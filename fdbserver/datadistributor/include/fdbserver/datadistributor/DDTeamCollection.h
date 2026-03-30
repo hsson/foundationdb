@@ -280,6 +280,7 @@ protected:
 	Future<Void> wrongStoreTypeRemover;
 
 	AsyncVar<Optional<Key>> healthyZone;
+	AsyncVar<MaintenanceType> healthyZoneType;
 	Future<bool> clearHealthyZoneFuture;
 
 	Reference<BulkLoadTaskCollection> bulkLoadTaskCollection;

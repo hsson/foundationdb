@@ -1533,6 +1533,33 @@ std::pair<Key, Version> decodeHealthyZoneValue(ValueRef const& value) {
 	return std::make_pair(zoneId, version);
 }
 
+// V2 implementation with type discriminator for data hall support
+Value healthyZoneValue(StringRef const& id, Version version, MaintenanceType type) {
+	BinaryWriter wr(IncludeVersion(ProtocolVersion::withHealthyZoneValueV2()));
+	wr << static_cast<uint8_t>(type);
+	wr << id;
+	wr << version;
+	return wr.toValue();
+}
+
+std::pair<Key, Version> decodeHealthyZoneValue(ValueRef const& value, MaintenanceType& type) {
+	Key id;
+	Version version;
+	BinaryReader reader(value, IncludeVersion());
+	
+	if (reader.protocolVersion().hasHealthyZoneValueV2()) {
+		uint8_t typeByte;
+		reader >> typeByte;
+		type = static_cast<MaintenanceType>(typeByte);
+	} else {
+		type = MaintenanceType::ZONE;
+	}
+	
+	reader >> id;
+	reader >> version;
+	return std::make_pair(id, version);
+}
+
 const KeyRangeRef testOnlyTxnStateStorePrefixRange("\xff/TESTONLYtxnStateStore/"_sr, "\xff/TESTONLYtxnStateStore0"_sr);
 
 const KeyRef writeRecoveryKey = "\xff/writeRecovery"_sr;

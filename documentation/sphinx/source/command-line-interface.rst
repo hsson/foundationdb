@@ -355,15 +355,19 @@ The ``lock`` command locks the database with a randomly generated lockUID.
 maintenance
 -----------
 
-The ``maintenance`` command marks a particular zone ID (i.e. fault domain) as being under maintenance. Its syntax is ``maintenance [on|off] [ZONEID] [SECONDS]``. 
+The ``maintenance`` command marks a particular zone ID (i.e. fault domain) or data hall as being under maintenance. Its syntax is ``maintenance [on|off] [ZONEID] [SECONDS]`` or ``maintenance on --data-hall [DATAHALLID] [SECONDS]``. 
 
-A zone that is under maintenance will not have data moved away from it even if processes in that zone fail. In particular, this means the cluster will not attempt to heal the replication factor as a result of failures in the maintenance zone. This is useful when the amount of time that the processes in a fault domain are expected to be absent is reasonably short and you don't want to move data to and from the affected processes. 
+A zone or data hall that is under maintenance will not have data moved away from it even if processes in that zone or data hall fail. In particular, this means the cluster will not attempt to heal the replication factor as a result of failures in the maintenance zone/data hall. This is useful when the amount of time that the processes in a fault domain or data hall are expected to be absent is reasonably short and you don't want to move data to and from the affected processes. 
 
 Running this command with no arguments will display the state of any current maintenance.
 
 Running ``maintenance on <ZONEID> <SECONDS>`` will turn maintenance on for the specified zone. A duration must be specified for the length of maintenance mode.
 
+Running ``maintenance on --data-hall <DATAHALLID> <SECONDS>`` will turn maintenance on for the specified data hall. When a data hall is under maintenance, all storage servers in that data hall will not have data moved away from them if they fail. This is useful when performing maintenance on an entire data hall (e.g., for hardware upgrades or network maintenance).
+
 Running ``maintenance off`` will turn off maintenance mode.
+
+Only one zone or data hall can be in maintenance at a time. Setting a new maintenance target will automatically clear any existing maintenance.
 
 option
 ------

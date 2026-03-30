@@ -107,6 +107,38 @@ Future<bool> setHealthyZone(Reference<IDatabase> db, StringRef zoneId, double se
 	}
 }
 
+// add a data hall to maintenance and specify the maintenance duration
+Future<bool> setHealthyDataHall(Reference<IDatabase> db, StringRef dataHallId, double seconds, bool printWarning) {
+	Reference<ITransaction> tr = db->createTransaction();
+	TraceEvent("SetHealthyDataHall").detail("DataHall", dataHallId).detail("DurationSeconds", seconds);
+	while (true) {
+		tr->setOption(FDBTransactionOptions::SPECIAL_KEY_SPACE_ENABLE_WRITES);
+		Error err;
+		try {
+			ThreadFuture<RangeResult> resultFuture =
+			    tr->getRange(fdb_cli::maintenanceSpecialKeyRange, CLIENT_KNOBS->TOO_MANY);
+			RangeResult res = co_await safeThreadFutureToFuture(resultFuture);
+			ASSERT(res.size() <= 1);
+			if (res.size() == 1 && res[0].key == fdb_cli::ignoreSSFailureSpecialKey) {
+				if (printWarning) {
+					fprintf(stderr,
+					        "ERROR: Maintenance mode cannot be used while data distribution is disabled for storage "
+					        "server failures. Use 'datadistribution on' to reenable data distribution.\n");
+				}
+				co_return false;
+			}
+			// Use data hall prefix to distinguish from zone maintenance
+			tr->set(fdb_cli::maintenanceSpecialKeyRange.begin.withSuffix("data_hall:"_sr).withSuffix(dataHallId),
+			        boost::lexical_cast<std::string>(seconds));
+			co_await safeThreadFutureToFuture(tr->commit());
+			co_return true;
+		} catch (Error& e) {
+			err = e;
+		}
+		co_await safeThreadFutureToFuture(tr->onError(err));
+	}
+}
+
 // clear ongoing maintenance, let clearSSFailureZoneString = true to enable data distribution for storage
 Future<bool> clearHealthyZone(Reference<IDatabase> db, bool printWarning, bool clearSSFailureZoneString) {
 	Reference<ITransaction> tr = db->createTransaction();
@@ -157,6 +189,17 @@ Future<bool> maintenanceCommandActor(Reference<IDatabase> db, std::vector<String
 			bool setResult = co_await setHealthyZone(db, tokens[2], seconds, true);
 			result = setResult;
 		}
+	} else if (tokens.size() == 5 && tokencmp(tokens[1], "on") && tokencmp(tokens[2], "--data-hall")) {
+		double seconds;
+		int n = 0;
+		auto secondsStr = tokens[4].toString();
+		if (sscanf(secondsStr.c_str(), "%lf%n", &seconds, &n) != 1 || n != secondsStr.size()) {
+			printUsage(tokens[0]);
+			result = false;
+		} else {
+			bool setResult = co_await setHealthyDataHall(db, tokens[3], seconds, true);
+			result = setResult;
+		}
 	} else {
 		printUsage(tokens[0]);
 		result = false;
@@ -167,11 +210,12 @@ Future<bool> maintenanceCommandActor(Reference<IDatabase> db, std::vector<String
 CommandFactory maintenanceFactory(
     "maintenance",
     CommandHelp(
-        "maintenance [on|off] [ZONEID] [SECONDS]",
-        "mark a zone for maintenance",
+        "maintenance [on|off] [ZONEID] [SECONDS] | maintenance on --data-hall [DATAHALLID] [SECONDS]",
+        "mark a zone or data hall for maintenance",
         "Calling this command with `on' prevents data distribution from moving data away from the processes with the "
-        "specified ZONEID. Data distribution will automatically be turned back on for ZONEID after the specified "
-        "SECONDS have elapsed, or after a storage server with a different ZONEID fails. Only one ZONEID can be marked "
-        "for maintenance. Calling this command with no arguments will display any ongoing maintenance. Calling this "
-        "command with `off' will disable maintenance.\n"));
+        "specified ZONEID. Use `on --data-hall' to mark an entire data hall for maintenance. Data distribution will "
+        "automatically be turned back on after the specified SECONDS have elapsed, or after a storage server outside "
+        "the maintenance zone/data hall fails. Only one zone or data hall can be marked for maintenance at a time. "
+        "Calling this command with no arguments will display any ongoing maintenance. Calling this command with `off' "
+        "will disable maintenance.\n"));
 } // namespace fdb_cli

@@ -273,7 +273,8 @@ class DDTxnProcessorImpl {
 		}
 		if (healthyZoneRead) {
 			if (healthyZoneVal.present()) {
-				auto p = decodeHealthyZoneValue(healthyZoneVal.get());
+				MaintenanceType maintenanceType;
+				auto p = decodeHealthyZoneValue(healthyZoneVal.get(), maintenanceType);
 				if (p.second > tr.getReadVersion().get() || p.first == ignoreSSFailuresZoneString) {
 					co_return Optional<Key>(p.first);
 				}

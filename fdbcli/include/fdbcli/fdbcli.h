@@ -303,6 +303,7 @@ Future<bool> hotRangeCommandActor(Database localDb,
 
 // maintenance command
 Future<bool> setHealthyZone(Reference<IDatabase> db, StringRef zoneId, double seconds, bool printWarning = false);
+Future<bool> setHealthyDataHall(Reference<IDatabase> db, StringRef dataHallId, double seconds, bool printWarning = false);
 Future<bool> clearHealthyZone(Reference<IDatabase> db,
                               bool printWarning = false,
                               bool clearSSFailureZoneString = false);

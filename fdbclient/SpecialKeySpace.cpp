@@ -2564,11 +2564,12 @@ static Future<Optional<std::string>> maintenanceCommitActor(ReadYourWritesTransa
 
 	RangeMap<Key, std::pair<bool, Optional<Value>>, KeyRangeRef>::Ranges ranges =
 	    ryw->getSpecialKeySpaceWriteMap().containedRanges(kr);
-	Key zoneId;
+	Key targetId;
+	MaintenanceType maintenanceType = MaintenanceType::ZONE;
 	double seconds;
 	bool isSet = false;
-	// Since maintenance only allows one zone at the same time,
-	// if a transaction has more than one set operation on different zone keys,
+	// Since maintenance only allows one target (zone or data hall) at the same time,
+	// if a transaction has more than one set operation on different keys,
 	// the commit will throw an error
 	for (auto iter = ranges.begin(); iter != ranges.end(); ++iter) {
 		if (!iter->value().first)
@@ -2576,9 +2577,18 @@ static Future<Optional<std::string>> maintenanceCommitActor(ReadYourWritesTransa
 		if (iter->value().second.present()) {
 			if (isSet)
 				co_return Optional<std::string>(ManagementAPIError::toJsonString(
-				    false, "maintenance", "Multiple zones given for maintenance, only one allowed at the same time"));
+				    false, "maintenance", "Multiple targets given for maintenance, only one allowed at the same time"));
 			isSet = true;
-			zoneId = iter->begin().removePrefix(kr.begin);
+			Key key = iter->begin().removePrefix(kr.begin);
+			// Check if this is a data hall key (prefixed with "data_hall:")
+			StringRef dataHallPrefix = "data_hall:"_sr;
+			if (key.startsWith(dataHallPrefix)) {
+				maintenanceType = MaintenanceType::DATA_HALL;
+				targetId = key.removePrefix(dataHallPrefix);
+			} else {
+				maintenanceType = MaintenanceType::ZONE;
+				targetId = key;
+			}
 			seconds = boost::lexical_cast<double>(iter->value().second.get().toString());
 		} else {
 			// if we already have set operation, then all clear operations will be meaningless, thus skip
@@ -2597,11 +2607,14 @@ static Future<Optional<std::string>> maintenanceCommitActor(ReadYourWritesTransa
 			    "The specified maintenance time " + boost::lexical_cast<std::string>(seconds) + " is a negative value";
 			co_return Optional<std::string>(ManagementAPIError::toJsonString(false, "maintenance", msg));
 		} else {
-			TraceEvent(SevDebug, "SKSMaintenanceSet").detail("ZoneId", zoneId.toString());
+			TraceEvent(SevDebug, "SKSMaintenanceSet")
+			    .detail("TargetId", targetId.toString())
+			    .detail("Type", maintenanceType == MaintenanceType::DATA_HALL ? "DataHall" : "Zone");
 			ryw->getTransaction().set(healthyZoneKey,
-			                          healthyZoneValue(zoneId,
+			                          healthyZoneValue(targetId,
 			                                           ryw->getTransaction().getReadVersion().get() +
-			                                               (seconds * CLIENT_KNOBS->CORE_VERSIONSPERSECOND)));
+			                                               (seconds * CLIENT_KNOBS->CORE_VERSIONSPERSECOND),
+			                                           maintenanceType));
 		}
 	}
 	co_return Optional<std::string>();

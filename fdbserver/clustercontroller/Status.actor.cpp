@@ -733,6 +733,7 @@ ACTOR static Future<JsonBuilderObject> processStatusFetcher(
     Database cx,
     Optional<DatabaseConfiguration> configuration,
     Optional<Key> healthyZone,
+    MaintenanceType healthyZoneType,
     std::set<std::string>* incomplete_reasons) {
 
 	state JsonBuilderObject processMap;
@@ -893,7 +894,15 @@ ACTOR static Future<JsonBuilderObject> processStatusFetcher(
 			if (processMetrics.size() > 0) {
 				std::string zoneID = processMetrics.getValue("ZoneID");
 				statusObj["fault_domain"] = zoneID;
-				if (healthyZone.present() && healthyZone == workerItr->interf.locality.zoneId()) {
+				bool isUnderMaintenance = false;
+				if (healthyZone.present()) {
+					if (healthyZoneType == MaintenanceType::DATA_HALL) {
+						isUnderMaintenance = healthyZone == workerItr->interf.locality.dataHallId();
+					} else {
+						isUnderMaintenance = healthyZone == workerItr->interf.locality.zoneId();
+					}
+				}
+				if (isUnderMaintenance) {
 					statusObj["under_maintenance"] = true;
 				}
 
@@ -1606,9 +1615,11 @@ struct LoadConfigurationResult {
 	// FIXME: possible convert it to int if upgrade value can be resolved?
 	std::string rebalanceDDIgnoreHex; // any or combination of 0, 1, 2, see DDIgnore;
 	bool dataDistributionDisabled;
+	MaintenanceType healthyZoneType;
 
 	LoadConfigurationResult()
-	  : fullReplication(true), healthyZoneSeconds(0), rebalanceDDIgnored(false), dataDistributionDisabled(false) {}
+	  : fullReplication(true), healthyZoneSeconds(0), rebalanceDDIgnored(false), dataDistributionDisabled(false),
+	    healthyZoneType(MaintenanceType::ZONE) {}
 };
 
 ACTOR static Future<std::pair<Optional<DatabaseConfiguration>, Optional<LoadConfigurationResult>>>
@@ -1668,16 +1679,18 @@ loadConfiguration(Database cx, JsonBuilderArray* messages, std::set<std::string>
 					LoadConfigurationResult res;
 					res.fullReplication = (!unreplicated || (result.get().usableRegions == 1 &&
 					                                         unreplicated < result.get().regions.size()));
-					if (healthyZoneValue.get().present()) {
-						auto healthyZone = decodeHealthyZoneValue(healthyZoneValue.get().get());
-						if (healthyZone.first == ignoreSSFailuresZoneString) {
-							res.healthyZone = healthyZone.first;
-						} else if (healthyZone.second > tr.getReadVersion().get()) {
-							res.healthyZone = healthyZone.first;
-							res.healthyZoneSeconds =
-							    (healthyZone.second - tr.getReadVersion().get()) / CLIENT_KNOBS->CORE_VERSIONSPERSECOND;
-						}
+if (healthyZoneValue.get().present()) {
+					MaintenanceType maintenanceType;
+					auto healthyZone = decodeHealthyZoneValue(healthyZoneValue.get().get(), maintenanceType);
+					if (healthyZone.first == ignoreSSFailuresZoneString) {
+						res.healthyZone = healthyZone.first;
+					} else if (healthyZone.second > tr.getReadVersion().get()) {
+						res.healthyZone = healthyZone.first;
+						res.healthyZoneType = maintenanceType;
+						res.healthyZoneSeconds =
+						    (healthyZone.second - tr.getReadVersion().get()) / CLIENT_KNOBS->CORE_VERSIONSPERSECOND;
 					}
+				}
 					res.rebalanceDDIgnored = rebalanceDDIgnored.get().present();
 					if (res.rebalanceDDIgnored) {
 						res.rebalanceDDIgnoreHex = rebalanceDDIgnored.get().get().toHexString();
@@ -3037,14 +3050,18 @@ ACTOR Future<StatusReply> clusterGetStatus(
 
 		if (loadResult.present()) {
 			statusObj["full_replication"] = loadResult.get().fullReplication;
-			if (loadResult.get().healthyZone.present()) {
-				if (loadResult.get().healthyZone.get() != ignoreSSFailuresZoneString) {
-					statusObj["maintenance_zone"] = loadResult.get().healthyZone.get().printable();
-					statusObj["maintenance_seconds_remaining"] = loadResult.get().healthyZoneSeconds;
+if (loadResult.get().healthyZone.present()) {
+			if (loadResult.get().healthyZone.get() != ignoreSSFailuresZoneString) {
+				if (loadResult.get().healthyZoneType == MaintenanceType::DATA_HALL) {
+					statusObj["maintenance_data_hall"] = loadResult.get().healthyZone.get().printable();
 				} else {
-					statusObj["data_distribution_disabled_for_ss_failures"] = true;
+					statusObj["maintenance_zone"] = loadResult.get().healthyZone.get().printable();
 				}
+				statusObj["maintenance_seconds_remaining"] = loadResult.get().healthyZoneSeconds;
+			} else {
+				statusObj["data_distribution_disabled_for_ss_failures"] = true;
 			}
+		}
 			if (loadResult.get().rebalanceDDIgnored) {
 				// TODO: change the hex string to human-friendly fields like "rebalance_read", "rebalance_disk"
 				statusObj["data_distribution_disabled_for_rebalance"] = true;
@@ -3271,6 +3288,7 @@ ACTOR Future<StatusReply> clusterGetStatus(
 		                              cx,
 		                              configuration,
 		                              loadResult.present() ? loadResult.get().healthyZone : Optional<Key>(),
+		                              loadResult.present() ? loadResult.get().healthyZoneType : MaintenanceType::ZONE,
 		                              &status_incomplete_reasons));
 		statusObj["processes"] = processStatus;
 		statusObj["clients"] = clientStatusFetcher(clientStatus);

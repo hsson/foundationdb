@@ -683,8 +683,16 @@ namespace DDIgnore {
 enum IgnoreType : uint8_t { NONE = 0, REBALANCE_DISK = 1, REBALANCE_READ = 2, ALL = 3 };
 }
 
+// Maintenance type discriminator for data hall support
+enum class MaintenanceType : uint8_t { ZONE = 0, DATA_HALL = 1 };
+
+// Zone-only functions (backward compatible)
 Value healthyZoneValue(StringRef const& zoneId, Version version);
 std::pair<Key, Version> decodeHealthyZoneValue(ValueRef const&);
+
+// Extended functions with type discriminator (supports both zone and data hall)
+Value healthyZoneValue(StringRef const& id, Version version, MaintenanceType type);
+std::pair<Key, Version> decodeHealthyZoneValue(ValueRef const&, MaintenanceType& type);
 
 // All mutations done to this range are blindly copied into txnStateStore.
 // Used to create artificially large txnStateStore instances in testing.

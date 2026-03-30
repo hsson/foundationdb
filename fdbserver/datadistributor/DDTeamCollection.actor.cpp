@@ -1885,7 +1885,15 @@ public:
 		loop {
 			state bool inHealthyZone = false; // healthChanged actor will be Never() if this flag is true
 			if (self->healthyZone.get().present()) {
-				if (interf.locality.zoneId() == self->healthyZone.get()) {
+				bool isInMaintenance = false;
+				if (self->healthyZoneType.get() == MaintenanceType::DATA_HALL) {
+					// Check if server's data hall matches maintenance data hall
+					isInMaintenance = interf.locality.dataHallId() == self->healthyZone.get();
+				} else {
+					// Zone-based maintenance
+					isInMaintenance = interf.locality.zoneId() == self->healthyZone.get();
+				}
+				if (isInMaintenance) {
 					status->isFailed = false;
 					inHealthyZone = true;
 				} else if (self->healthyZone.get().get() == ignoreSSFailuresZoneString) {
@@ -2571,7 +2579,9 @@ public:
 				Optional<Value> val = co_await tr.get(healthyZoneKey);
 				Future<Void> healthyZoneTimeout = Never();
 				if (val.present()) {
-					auto p = decodeHealthyZoneValue(val.get());
+					MaintenanceType maintenanceType;
+					auto p = decodeHealthyZoneValue(val.get(), maintenanceType);
+					self->healthyZoneType.set(maintenanceType);
 					if (p.first == ignoreSSFailuresZoneString) {
 						// healthyZone is now overloaded for DD disabling purpose, which does not timeout
 						TraceEvent("DataDistributionDisabledForStorageServerFailuresStart", self->distributorId).log();
